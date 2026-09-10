@@ -2,13 +2,30 @@
 
 ## 1. Purpose
 
-The Job Discovery Platform may eventually process a large number of searches, URLs, source pages, and job opportunities.
+The Job Discovery Platform is expected to grow from a small V1 product into a larger job discovery system.
 
-However, scalability should be introduced based on actual system requirements.
+The initial system should remain simple.
 
-The first goal is to build a correct and useful product.
+The goal is not to build a highly distributed system on Day 1.
 
-The second goal is to scale the parts that become bottlenecks.
+The goal is to create an architecture that can grow when real product usage creates real bottlenecks.
+
+The main scalability challenge is not only user traffic.
+
+The platform also has to process:
+
+- Search requests
+- Search queries
+- External URLs
+- Public web pages
+- Raw documents
+- Job extraction
+- Validation
+- Deduplication
+- Freshness checks
+- Search and ranking
+
+Therefore, discovery workload and user-facing traffic should be treated as different workloads.
 
 ---
 
@@ -16,161 +33,215 @@ The second goal is to scale the parts that become bottlenecks.
 
 The system should follow these principles:
 
-- Scale the bottleneck, not the entire system.
-- Keep the architecture simple initially.
-- Prefer stateless application instances.
-- Separate network-heavy work from user-facing APIs.
+- Build simple first.
+- Measure before scaling.
+- Scale the bottleneck instead of the whole system.
+- Keep the API layer as stateless as possible.
+- Separate user requests from long-running discovery work.
 - Make processing retryable.
 - Make processing idempotent.
-- Avoid unnecessary synchronous processing.
-- Cache repeated work where useful.
-- Measure before introducing infrastructure.
+- Control external request rates.
+- Isolate failures.
+- Avoid unnecessary infrastructure.
 - Keep source adapters independent.
+- Keep the domain model stable.
 
 ---
 
-# 3. What Can Become a Bottleneck?
+# 3. V1 Architecture
 
-The main workload areas are different from a traditional CRUD application.
+The initial architecture is:
 
-Potential bottlenecks include:
-
-1. Search provider requests
-2. External page fetching
-3. HTML processing
-4. Job extraction
-5. AI-assisted extraction
-6. Deduplication
-7. Database writes
-8. Search queries
-9. Storage of raw documents
-10. User search traffic
-
-The architecture should allow these areas to scale independently when necessary.
-
----
-
-# 4. V1 Scale
-
-V1 does not need distributed infrastructure.
-
-Initial architecture:
-
-    Backend
+    Frontend
        ↓
-    Async Thread Pool
+    Backend API
+       ↓
+    Spring Boot Modular Monolith
+       ↓
+    Async Processing
        ↓
     PostgreSQL
 
-This is intentionally simple.
+The frontend is a separate application.
 
-The goal is to validate:
+The backend is a single deployable application containing the discovery pipeline.
 
-- Discovery quality
-- Extraction quality
-- Relevance
-- Freshness
-- Deduplication
-
-before optimizing infrastructure.
+The backend is the primary scalability concern during V1.
 
 ---
 
-# 5. Stateless API
+# 4. Two Different Workloads
 
-The backend API should remain as stateless as possible.
+The platform has two major workloads.
 
-A request should not depend on local server memory for important persistent state.
+## User Workload
 
-Persistent state belongs in:
+Examples:
+
+- Search
+- View opportunities
+- Open details
+- Apply filters
+- Sort results
+
+This workload should remain fast.
+
+## Discovery Workload
+
+Examples:
+
+- Generate queries
+- Search external providers
+- Process URLs
+- Fetch pages
+- Parse HTML
+- Extract jobs
+- Validate
+- Deduplicate
+- Store results
+
+This workload can be slow and unpredictable.
+
+The architecture should keep these workloads separate.
+
+    User Request
+         ↓
+    Fast API
+         ↓
+    Discovery Task
+         ↓
+    Background Processing
+
+---
+
+# 5. Frontend Scalability
+
+The frontend should remain lightweight.
+
+It should not perform expensive discovery operations.
+
+The frontend should:
+
+- Send search requests
+- Poll or retrieve task status
+- Request results
+- Render opportunities
+- Navigate to details
+
+The frontend should not:
+
+- Crawl websites
+- Call search providers directly
+- Parse external job pages
+- Perform deduplication
+- Run heavy processing
+
+This keeps the frontend easy to scale independently later.
+
+---
+
+# 6. Stateless Backend API
+
+The backend API should be as stateless as possible.
+
+Important persistent state should be stored in:
 
     PostgreSQL
-    +
-    Future Cache / Storage
+
+Future supporting systems may include:
+
+    Redis
+    Object Storage
+    Search Index
+
+The API should not depend on local server memory for important application state.
 
 This allows multiple backend instances to be added later.
 
 ---
 
-# 6. Horizontal Scaling
+# 7. Horizontal API Scaling
 
-When API traffic increases:
+When user traffic increases, multiple backend instances can be deployed.
 
+Example:
+
+    Frontend
+       ↓
     Load Balancer
-         ↓
-    ┌──────────┐
-    │ Backend 1│
-    ├──────────┤
-    │ Backend 2│
-    ├──────────┤
-    │ Backend 3│
-    └──────────┘
-         ↓
-    PostgreSQL
+       ↓
+    ┌───────────────┐
+    │ Backend API 1 │
+    │ Backend API 2 │
+    │ Backend API 3 │
+    └───────┬───────┘
+            ↓
+        PostgreSQL
 
-The API layer can then scale horizontally.
-
-This works best when backend instances remain stateless.
+Because the API is stateless, requests can be distributed between instances.
 
 ---
 
-# 7. Discovery Workload Scaling
+# 8. Discovery Workload Scaling
 
-Discovery is different from normal API traffic.
+Discovery is more expensive than a normal API request.
 
-A single search may trigger:
+One search can produce:
 
-    Multiple queries
+    1 User Search
+        ↓
+    Multiple Queries
         ↓
     Many URLs
         ↓
-    Many HTTP requests
+    Many Page Requests
         ↓
-    Many extraction operations
+    Many Extraction Operations
 
-Therefore discovery should not run directly inside the API request thread.
+Therefore discovery should not run completely inside the API request thread.
 
-Instead:
+Preferred flow:
 
     API
       ↓
-    Discovery Task
+    Create Discovery Task
       ↓
-    Worker
+    Background Worker
       ↓
     Discovery Pipeline
+      ↓
+    Database
 
 ---
 
-# 8. Worker Scaling
+# 9. V1 Async Processing
 
-As discovery volume grows:
+V1 can use:
 
-    Discovery Queue
-         ↓
-    ┌─────────────┐
-    │ Worker 1    │
-    ├─────────────┤
-    │ Worker 2    │
-    ├─────────────┤
-    │ Worker 3    │
-    └─────────────┘
+    Spring Async
+        +
+    Controlled Thread Pool
 
-Workers can process discovery tasks independently.
+This provides background processing without introducing a distributed queue.
 
-The number of workers can increase according to workload.
+The thread pool should have controlled limits.
+
+The application should not create an unlimited number of threads.
 
 ---
 
-# 9. Queue Introduction
+# 10. When a Queue Becomes Necessary
 
-A queue becomes useful when:
+A queue becomes useful when the discovery workload becomes large enough that a local thread pool is no longer sufficient.
 
-- Discovery tasks increase
-- Processing becomes long-running
-- Multiple workers are needed
-- Retry handling becomes important
-- Backpressure is required
+Possible signals:
+
+- Large number of simultaneous discovery tasks
+- Long task queues
+- Need for multiple worker instances
+- More advanced retry requirements
+- Need for durable task buffering
+- Need for independent worker scaling
 
 Possible future technologies:
 
@@ -184,60 +255,81 @@ Kafka is not required for V1.
 
 ---
 
-# 10. Backpressure
+# 11. Worker Scaling
 
-External sources have limits.
+When discovery workload increases:
 
-The system should not send unlimited requests just because internal traffic increases.
-
-Example:
-
-    User Traffic
-         ↓
     Discovery Queue
          ↓
-    Controlled Workers
-         ↓
-    External Sources
+    ┌───────────────┐
+    │ Worker 1      │
+    │ Worker 2      │
+    │ Worker 3      │
+    │ Worker N      │
+    └───────┬───────┘
+            ↓
+    Discovery Pipeline
 
-The queue and worker limits can protect:
+Workers can scale independently from API instances.
 
-- Search providers
-- Source websites
-- Database
-- CPU
-- Network
+This is important because adding more API servers should not automatically create excessive external crawling.
 
 ---
 
-# 11. Rate Limiting
+# 12. Backpressure
 
-Different sources may have different request limits.
-
-The platform should support source-specific limits.
+The system must control how much work is sent to external sources.
 
 Example:
 
-    Search Provider
-        10 requests/sec
+    Many User Searches
+           ↓
+    Discovery Queue
+           ↓
+    Controlled Workers
+           ↓
+    External Sources
 
-    Source A
-        1 request/sec
+This prevents:
 
-    Source B
-        5 requests/sec
+- Excessive provider requests
+- Excessive website requests
+- Database overload
+- CPU overload
+- Network overload
 
-The exact limits should come from provider/source requirements.
-
-The system should never assume that all sources can handle the same request rate.
+Backpressure becomes especially important when discovery volume increases.
 
 ---
 
-# 12. Fetching Scalability
+# 13. External Source Rate Limits
+
+Different sources may have different limits.
+
+The system should support source-specific controls.
+
+Conceptually:
+
+    Source A
+        → Controlled Request Rate
+
+    Source B
+        → Different Request Rate
+
+    Search Provider
+        → Provider-specific Limits
+
+The exact limits must come from the source/provider requirements.
+
+The system should not assume every source supports the same request rate.
+
+---
+
+# 14. Fetching Scalability
 
 Page fetching is network-heavy.
 
-As volume increases, fetching can become a major bottleneck.
+At higher volume, fetching can become one of the largest workloads.
 
 Future architecture:
 
@@ -252,44 +344,48 @@ Workers should support:
 - Timeout
 - Retry
 - Backoff
-- Rate limits
+- Rate limiting
 - Failure isolation
 
----
-
-# 13. Extraction Scalability
-
-Extraction can be CPU-intensive.
-
-Basic HTML extraction may be relatively cheap.
-
-AI-assisted extraction can be significantly more expensive.
-
-Therefore AI processing should be isolated.
-
-Possible flow:
-
-    Normal Extraction
-         ↓
-    Successful
-         ↓
-    Store
-
-If uncertain:
-
-    AI Extraction
-         ↓
-    Validation
-         ↓
-    Store
-
-AI should be used selectively rather than automatically for every page.
+A failed page should not block unrelated pages.
 
 ---
 
-# 14. Database Scalability
+# 15. Extraction Scalability
 
-PostgreSQL should be the initial source of truth.
+Extraction has different resource requirements.
+
+Simple extraction:
+
+    HTML
+      ↓
+    Parser
+      ↓
+    Text
+
+is relatively lightweight.
+
+AI-assisted extraction can be more expensive.
+
+Therefore AI processing should be selective.
+
+Preferred approach:
+
+    Page
+      ↓
+    Deterministic Extraction
+      ↓
+    Confidence Check
+      ↓
+    AI Only If Needed
+
+This controls both compute and AI cost.
+
+---
+
+# 16. Database Scalability
+
+PostgreSQL should remain the initial source of truth.
 
 Before introducing another database, optimize PostgreSQL using:
 
@@ -297,35 +393,37 @@ Before introducing another database, optimize PostgreSQL using:
 - Query optimization
 - Connection pooling
 - Pagination
-- Batch writes
+- Batch operations
 - Appropriate schema design
-- Archiving old raw data
+- Data retention policies
+
+The system should measure database performance before deciding to introduce additional infrastructure.
 
 ---
 
-# 15. Important Database Indexes
+# 17. Important Database Indexes
 
-Potential indexes include:
+Potential query dimensions include:
 
-    city
-    company
-    opportunity type
-    event date
-    status
-    discoveredAt
-    lastCheckedAt
+- City
+- Company
+- Opportunity type
+- Event date
+- Status
+- Discovered time
+- Last checked time
 
-Composite indexes should be introduced based on actual query patterns.
+Composite indexes should be added based on actual query patterns.
 
-Do not create indexes for every field without measuring.
+Do not create indexes for every field without evidence.
+
+Too many indexes can increase write cost and storage usage.
 
 ---
 
-# 16. Database Connection Pooling
+# 18. Database Connection Management
 
-As application instances increase, database connections can become a bottleneck.
-
-The system should use controlled connection pools.
+As backend instances increase, database connections can become a bottleneck.
 
 For example:
 
@@ -337,62 +435,71 @@ For example:
        ↓
     Connection Pool
 
-The total number of connections must remain within PostgreSQL capacity.
+    Backend 3
+       ↓
+    Connection Pool
 
-Adding more backend instances does not mean unlimited database connections.
+The total number of database connections must remain within PostgreSQL capacity.
+
+Adding more application instances does not mean unlimited database connections.
+
+Connection pool sizes should be controlled.
 
 ---
 
-# 17. Search Scalability
+# 19. Search Scalability
 
 V1 search can use PostgreSQL.
 
-As data grows, search requirements may become more complex.
+This is sufficient for the initial product requirements.
 
-Possible future search layer:
+As the opportunity dataset grows, search may require:
 
-    PostgreSQL
-        +
-    Search Index
+- Full-text search
+- Advanced ranking
+- Fuzzy matching
+- Semantic search
+- Large-scale filtering
+- Low-latency search
 
-Potential technologies:
+Possible future technologies:
 
+- PostgreSQL full-text search
 - OpenSearch
 - Elasticsearch
-- PostgreSQL full-text search
 
-The decision should depend on:
+The decision should be based on:
 
 - Dataset size
 - Query complexity
-- Ranking requirements
 - Search latency
+- Ranking requirements
 
 ---
 
-# 18. Caching
+# 20. Caching
 
 Redis can be introduced when repeated reads justify it.
 
-Useful cache candidates:
+Potential cache candidates:
 
 - Popular searches
-- City/technology normalization
+- Frequently viewed opportunities
+- Normalized city values
 - Source metadata
-- Frequently accessed opportunities
-- Search results with short TTL
+- Short-lived search results
 
-Caching should not become the primary source of truth.
+The cache should not become the primary source of truth.
 
 PostgreSQL remains authoritative.
 
 ---
 
-# 19. Raw Document Storage
+# 21. Raw Document Storage
 
-Raw HTML can consume significant storage.
+Raw HTML can become a significant storage workload.
 
-At small scale it can remain in the database if appropriate.
+Initially, raw documents can use the simplest appropriate storage approach.
 
 At larger scale:
 
@@ -402,138 +509,142 @@ At larger scale:
        ↓
     Raw Documents
 
-Possible storage:
+The database can retain:
+
+- Document metadata
+- Content hash
+- Source URL
+- Storage reference
+
+Possible future storage:
 
 - S3-compatible object storage
 - Cloud object storage
 
-The database can retain metadata and a reference to the stored document.
-
 ---
 
-# 20. Deduplication at Scale
+# 22. Deduplication Scalability
 
-Deduplication can become expensive if every new opportunity is compared with every existing opportunity.
+Deduplication can become expensive as the number of opportunities grows.
 
 Avoid:
 
-    New Job
-       ↓
-    Compare with every job
+    New Opportunity
+          ↓
+    Compare with Every Existing Opportunity
 
-Instead use candidate matching.
+Instead, first identify likely candidates using:
 
-First narrow candidates using:
+- Company
+- City
+- Opportunity type
+- Event date
+- Normalized title
 
-    Company
-    City
-    Job Type
-    Event Date
+Then perform deeper comparison only on those candidates.
 
-Then perform deeper similarity only on likely matches.
-
-This keeps deduplication closer to:
-
-    Candidate Matching
-        ↓
-    Detailed Comparison
-
-rather than full-dataset comparison.
+This reduces unnecessary comparisons.
 
 ---
 
-# 21. Idempotency at Scale
+# 23. Idempotency
 
-Retries are unavoidable in distributed processing.
+Distributed systems retry.
 
-A job may be processed more than once.
+A task or page may therefore be processed more than once.
 
-The system should therefore support idempotent processing.
+The pipeline must safely handle this.
 
 Possible mechanisms:
 
-- Unique database constraints
+- Unique constraints
 - Content hashes
 - Opportunity identity keys
 - Task IDs
-- Processing state
+- Normalized URLs
 
 Example:
 
-    Same URL
-        ↓
-    Same normalized identity
-        ↓
-    Update existing record
-        instead of
-    Creating duplicate record
+    Same Opportunity
+         ↓
+    Same Identity
+         ↓
+    Update Existing Record
+
+instead of:
+
+    Create Duplicate Record
 
 ---
 
-# 22. Retry Strategy
+# 24. Retry Strategy
 
 Not every failure should be retried.
 
 Examples:
 
-    Timeout
     Temporary network error
         → Retry
 
-    404
-        → Usually do not retry repeatedly
-
-    CAPTCHA
-        → Do not bypass
-
-    Authentication required
-        → Do not retry indefinitely
+    Timeout
+        → Retry
 
     Rate limit
         → Backoff
 
-Retries should use controlled limits.
+    404
+        → Usually do not repeatedly retry
+
+    Authentication required
+        → Do not bypass
+
+    CAPTCHA
+        → Do not bypass
+
+Retries should have:
+
+- Maximum attempts
+- Backoff
+- Failure tracking
 
 ---
 
-# 23. Source Reliability
+# 25. Source Reliability
 
-Not every source is equally reliable.
+Different sources will have different reliability.
 
-The system should measure:
+The platform should measure:
 
-- Fetch success
-- Extraction success
+- Fetch success rate
+- Extraction success rate
 - Duplicate rate
-- Expired rate
-- Information completeness
-- Historical freshness
+- Expired result rate
+- Completeness
+- Freshness
 
-This can later contribute to a source quality score.
-
----
-
-# 24. Discovery Coverage Scaling
-
-More sources do not automatically mean better results.
-
-The goal is:
-
-    Better Coverage
-       +
-    Better Relevance
-       +
-    Better Freshness
-
-A source should be added when it provides meaningful incremental coverage.
-
-This prevents unnecessary source complexity.
+This information can later contribute to source quality scoring.
 
 ---
 
-# 25. Scheduled Refresh
+# 26. Discovery Coverage
 
-Future versions may periodically refresh stored opportunities.
+Adding more sources does not automatically improve the product.
+
+The important metric is incremental useful coverage.
+
+For each new source, measure:
+
+    New Relevant Opportunities
+            ↓
+    Existing Relevant Opportunities
+
+A source that adds little useful coverage may not justify its processing cost.
+
+---
+
+# 27. Scheduled Refresh
+
+Future versions can periodically refresh stored opportunities.
 
 Example:
 
@@ -541,47 +652,49 @@ Example:
           ↓
     Scheduled Recheck
           ↓
-    Source Fetch
+    Fetch Source
+          ↓
+    Extract
           ↓
     Compare
           ↓
     Update
 
-This allows the system to detect:
+This can detect:
 
-- Expired events
-- Changed dates
-- Changed venues
-- Removed jobs
-- Updated descriptions
+- Date changes
+- Venue changes
+- Job removal
+- Event cancellation
+- Description changes
 
 ---
 
-# 26. Freshness Scaling
+# 28. Freshness-Based Processing Priority
 
-Not every opportunity needs the same refresh frequency.
+Not every opportunity requires the same refresh frequency.
 
 Possible future strategy:
 
-    Upcoming Event
-        → Higher refresh priority
+    Event Soon
+        → Higher Priority
 
-    Event far in future
-        → Lower refresh priority
+    Event Far Away
+        → Lower Priority
 
-    Old / Aging
-        → Lower priority
+    Aging Opportunity
+        → Lower Priority
 
-    Expired
-        → No regular refresh
+    Expired Opportunity
+        → No Regular Refresh
 
-This reduces unnecessary network usage.
+This reduces unnecessary processing.
 
 ---
 
-# 27. Priority-Based Processing
+# 29. Priority-Based Discovery
 
-As workload grows, discovery tasks can be prioritized.
+As workload increases, discovery tasks can be prioritized.
 
 Example:
 
@@ -589,82 +702,84 @@ Example:
     User-triggered search
 
     MEDIUM
-    Popular saved search
+    Frequently requested search
 
     LOW
     Background refresh
 
-This ensures interactive user requests are not blocked by background work.
+This ensures interactive searches are not blocked by background processing.
 
 ---
 
-# 28. Multi-Region Future
+# 30. Cost Scalability
 
-International expansion may eventually require multiple regions.
+Important future cost drivers include:
 
-Possible architecture:
-
-    Global API
-        ↓
-    Regional Processing
-        ├── India
-        ├── US
-        ├── Europe
-        └── Other Regions
-
-This is not required for the initial India-focused product.
-
----
-
-# 29. Cost Scalability
-
-The most important cost drivers may become:
-
-- Search API usage
-- HTTP fetching
+- Search provider usage
+- External requests
+- Compute
 - AI extraction
 - Database storage
 - Object storage
 - Search infrastructure
-- Compute
 
-Therefore the platform should measure cost per discovered opportunity.
+A useful future metric is:
 
-A useful future metric:
+    Total Processing Cost
+    ----------------------
+    Valid Opportunities Discovered
 
-    Infrastructure Cost
-    --------------------
-    Valid Opportunities
-
-This helps evaluate whether a new source or AI feature is economically useful.
+This helps determine whether a source or processing technique provides enough value.
 
 ---
 
-# 30. AI Cost Control
+# 31. AI Cost Control
 
-If AI extraction is introduced, avoid:
+If AI is introduced, the system should avoid sending every page to an AI model.
 
-    Every Page
+Preferred:
+
+    All Pages
         ↓
-    AI
-
-Prefer:
-
-    Every Page
+    Cheap Deterministic Processing
         ↓
-    Cheap Deterministic Extraction
+    Confidence Evaluation
         ↓
-    Confidence Check
+    AI Only For Uncertain Cases
         ↓
-    AI Only If Needed
+    Validation
 
-This can significantly reduce AI usage.
+This reduces:
+
+- AI cost
+- Processing time
+- Dependency on external AI services
 
 ---
 
-# 31. Scaling Architecture
+# 32. Frontend Scaling
 
-A future scaled architecture may look like:
+Once frontend usage grows, it can scale independently.
+
+Example:
+
+    Users
+      ↓
+    CDN / Frontend Hosting
+      ↓
+    Frontend Application
+      ↓
+    Backend API
+
+The frontend should remain independent from discovery worker scaling.
+
+A spike in discovery processing should not require scaling the frontend.
+
+---
+
+# 33. API and Worker Separation
+
+At higher scale:
 
     Users
       ↓
@@ -672,75 +787,120 @@ A future scaled architecture may look like:
       ↓
     API Instances
       ↓
-    Discovery Queue
+    Queue
       ↓
-    ┌───────────────────────────┐
-    │ Worker Pool               │
-    │                           │
-    │ Discovery Workers         │
-    │ Fetch Workers             │
-    │ Extraction Workers        │
-    │ Validation Workers        │
-    └─────────────┬─────────────┘
-                  ↓
-          ┌───────────────┐
-          │ Data Platform │
-          │               │
-          │ PostgreSQL    │
-          │ Redis         │
-          │ Search Index  │
-          │ Object Store  │
-          └───────────────┘
+    Worker Instances
+      ↓
+    Discovery Pipeline
+
+This creates an important separation:
+
+    API Scaling
+        ≠
+    Worker Scaling
+
+API instances can scale based on user traffic.
+
+Workers can scale based on discovery workload.
 
 ---
 
-# 32. When to Introduce More Infrastructure
+# 34. Future Scaled Architecture
+
+A possible future architecture is:
+
+    ┌──────────────────────┐
+    │        Users         │
+    └──────────┬───────────┘
+               ↓
+    ┌──────────────────────┐
+    │ Frontend / CDN       │
+    └──────────┬───────────┘
+               ↓
+    ┌──────────────────────┐
+    │ Load Balancer        │
+    └──────────┬───────────┘
+               ↓
+    ┌──────────────────────┐
+    │ API Instances        │
+    └──────────┬───────────┘
+               ↓
+    ┌──────────────────────┐
+    │ Discovery Queue      │
+    └──────────┬───────────┘
+               ↓
+    ┌────────────────────────────┐
+    │ Processing Workers         │
+    │                            │
+    │ Discovery                  │
+    │ Fetching                   │
+    │ Extraction                 │
+    │ Validation                 │
+    │ Deduplication              │
+    └────────────┬───────────────┘
+                 ↓
+    ┌────────────────────────────┐
+    │ Data Layer                 │
+    │                            │
+    │ PostgreSQL                 │
+    │ Redis                      │
+    │ Search Index               │
+    │ Object Storage             │
+    └────────────────────────────┘
+
+This is a future architecture.
+
+It is not required for V1.
+
+---
+
+# 35. When to Introduce More Infrastructure
 
 Infrastructure should be introduced when a measurable problem appears.
 
-Examples:
+Example:
 
     Problem:
     API latency
 
-    Possible solution:
+    Solution:
     Horizontal API scaling
 
     Problem:
-    Long discovery tasks
+    Discovery tasks take too long
 
-    Possible solution:
-    Worker queue
+    Solution:
+    More workers / queue
 
     Problem:
-    Repeated database reads
+    Repeated reads are expensive
 
-    Possible solution:
+    Solution:
     Redis
 
     Problem:
-    Search query latency at large dataset
+    Search becomes slow
 
-    Possible solution:
-    Search index
+    Solution:
+    Search index or PostgreSQL optimization
 
     Problem:
-    Raw storage growth
+    Raw documents consume too much database storage
 
-    Possible solution:
+    Solution:
     Object storage
 
     Problem:
-    Worker coordination at large scale
+    Worker coordination becomes difficult
 
-    Possible solution:
-    Distributed messaging
+    Solution:
+    Distributed queue
 
 The solution should follow the bottleneck.
 
 ---
 
-# 33. What Not to Do
+# 36. What Not to Do
 
 Do not introduce:
 
@@ -748,70 +908,93 @@ Do not introduce:
 - Kafka
 - Kubernetes
 - Multiple databases
-- Complex distributed systems
+- Distributed infrastructure
 
-just because the product may become large.
+only because the product might become large someday.
 
-Premature infrastructure increases:
+Premature infrastructure creates:
 
-- Development time
-- Cost
-- Operational complexity
-- Debugging difficulty
+- More development work
+- More operational cost
+- More failure modes
+- More debugging complexity
 
-Build the product first.
+The product should earn its infrastructure.
 
 ---
 
-# 34. Scalability Path
+# 37. Scalability Evolution
 
 The expected evolution is:
 
-    Phase 1
+## Stage 1 — V1
 
+    Frontend
     Spring Boot
     PostgreSQL
     Async Thread Pool
 
-        ↓
+## Stage 2 — Growing Product
 
-    Phase 2
-
-    Better indexing
+    Frontend
+    Multiple API Instances
+    PostgreSQL
     Redis if needed
-    Search optimization
+    Better indexing
 
-        ↓
+## Stage 3 — Growing Discovery Workload
 
-    Phase 3
-
+    API Instances
     Queue
-    Multiple workers
-    Horizontal API scaling
+    Multiple Workers
+    PostgreSQL
 
-        ↓
+## Stage 4 — Large Data Volume
 
-    Phase 4
-
+    API
+    Workers
+    PostgreSQL
+    Redis
     Search Index
     Object Storage
-    Advanced refresh system
 
-        ↓
+## Stage 5 — Large Distributed Platform
 
-    Phase 5
+    Multiple Services
+    Distributed Workers
+    Advanced Messaging
+    Multi-region Infrastructure
 
-    Selected service separation
-    Multi-region infrastructure
-    Advanced data platform
-
-Each phase should be triggered by real product requirements.
+Each stage should be triggered by actual requirements.
 
 ---
 
-# 35. Key Scalability Principle
+# 38. Scalability Metrics
 
-The platform should scale the processing pipeline independently from the user-facing application.
+Track:
+
+- API response time
+- Discovery task duration
+- Queue depth
+- Worker utilization
+- URLs processed per task
+- Fetch success rate
+- Fetch latency
+- Extraction time
+- Database query latency
+- Database CPU
+- Database storage
+- Search latency
+- Cache hit rate
+- Cost per valid opportunity
+
+These metrics should guide scaling decisions.
+
+---
+
+# 39. Core Scalability Principle
+
+The platform should scale the processing pipeline independently from user-facing traffic.
 
 The important separation is:
 
@@ -819,15 +1002,15 @@ The important separation is:
         ≠
     Discovery Workload
 
-User requests should remain fast even when the system is processing thousands of external pages.
+A large number of web pages being processed should not make normal user API requests slow.
 
-That separation is one of the most important scalability decisions in the product.
+Similarly, a spike in user traffic should not automatically cause uncontrolled crawling of external websites.
 
 ---
 
-# 36. Final Principle
+# 40. Final Principle
 
-The system should grow like this:
+The platform should evolve like this:
 
     Simple
        ↓
@@ -835,18 +1018,14 @@ The system should grow like this:
        ↓
     Optimized
        ↓
+    Decoupled
+       ↓
     Distributed
        ↓
     Scaled
 
-Not:
+The goal is not maximum infrastructure.
 
-    Complex
-       ↓
-    Distributed
-       ↓
-    Expensive
-       ↓
-    Hard to maintain
+The goal is a reliable job discovery system that can scale when real usage requires it.
 
 The architecture should earn its complexity.
