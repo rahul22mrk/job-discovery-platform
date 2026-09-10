@@ -1,801 +1,1192 @@
 # Data Pipeline
 
-## 1. Purpose
+## Purpose
 
 The data pipeline is the core of the Job Discovery Platform.
 
-Its job is to take a user's search intent and turn it into clean, relevant, fresh job opportunities.
+Its job is to take a user's search request and automatically discover, process, validate, and rank relevant job opportunities from the public internet.
 
-The basic flow is:
+The pipeline must prioritize:
 
-    User Search
-        ↓
-    Search Context
-        ↓
-    Query Generation
-        ↓
-    Source Discovery
-        ↓
-    URL Normalization
-        ↓
-    Page Fetching
-        ↓
-    Raw Document
-        ↓
-    Text / Structured Data Extraction
-        ↓
-    Walk-in Detection
-        ↓
-    Job Extraction
-        ↓
-    Normalization
-        ↓
-    Validation
-        ↓
-    Deduplication
-        ↓
-    Freshness
-        ↓
-    Ranking
-        ↓
-    Database
-        ↓
-    Search Results
+- Relevance over quantity
+- Freshness over volume
+- Trust over hype
+- Source transparency
+- Correctness over aggressive extraction
+- Failure isolation
+- Scalability without unnecessary complexity
 
-The pipeline should be modular so that individual stages can be improved without rewriting the complete system.
+The backend owns the complete discovery pipeline.
+
+The frontend only sends search requests and consumes the processed results through APIs.
 
 ---
 
-# 2. Pipeline Principles
+## High-Level Flow
 
-The pipeline should follow these principles:
+The V1 pipeline is:
 
-- Do not trust discovered data blindly.
-- Preserve the original source.
-- Do not invent missing information.
-- Separate raw data from normalized data.
-- Make every stage observable.
-- One failed page should not stop the complete pipeline.
-- Deduplicate before showing results.
-- Treat freshness as a first-class concern.
-- Keep source-specific logic isolated.
-- Prefer deterministic processing where it is sufficient.
-- Use AI only where it provides measurable value.
+Search Request
+→ Search Context
+→ Query Generation
+→ Source Discovery
+→ URL Normalization
+→ Page Fetching
+→ Raw Document
+→ Text / Structured Data Extraction
+→ Walk-in Detection
+→ Job Extraction
+→ Normalization
+→ Validation
+→ Deduplication
+→ Freshness
+→ Ranking
+→ Persistence
+→ Search API
+→ Frontend
+
+Each stage should have a clear responsibility.
+
+A failure in one source or one page should not stop the complete discovery task.
 
 ---
 
-# 3. Input
+## 1. Search Request
 
-The pipeline starts with a user's search request.
+The user starts a discovery search from the frontend.
 
 Example:
 
-    {
-      "city": "Bengaluru",
-      "keyword": "Java",
-      "experienceMin": 3,
-      "experienceMax": 5,
-      "fromDate": "2026-09-01",
-      "toDate": "2026-09-30",
-      "type": "WALK_IN"
-    }
+- City: Bengaluru
+- Technology: Java
+- Role: Backend Developer
+- Experience: 2-5 years
+- Date range: Next 30 days
 
-The API converts this request into an internal SearchContext.
+The frontend sends the request to the backend.
 
----
+Example endpoint:
 
-# 4. Search Context
+POST /api/v1/discovery/search
 
-SearchContext is the normalized representation of the user's intent.
-
-It may contain:
-
-- City
-- Country
-- Company
-- Keyword
-- Skills
-- Opportunity type
-- Minimum experience
-- Maximum experience
-- Start date
-- End date
-
-The SearchContext should be independent of any particular search provider.
+The backend should validate the request before starting discovery.
 
 ---
 
-# 5. Query Generation
+## 2. Search Context
 
-The Query Generator converts SearchContext into discovery queries.
+The backend converts the request into an internal `SearchContext`.
+
+Possible fields:
+
+- city
+- country
+- company
+- keyword
+- role
+- technologies
+- skills
+- job type
+- minimum experience
+- maximum experience
+- date range
+- source preferences
+- search options
 
 Example:
 
-    Input:
+City:
+Bengaluru
 
-    Bengaluru + Java + WALK_IN
+Role:
+Java Backend Developer
 
-    Queries:
+Skills:
+Java, Spring Boot, Microservices
 
-    "walk-in interview" "Bengaluru" "Java"
-    "walk-in drive" "Bengaluru" "Java"
-    "walkin interview" "Bengaluru" "Java"
-    "walk-in recruitment" "Bengaluru" "Java"
-    "Java developer" "walk-in" "Bengaluru"
-    "Java backend" "walk-in" "Bengaluru"
+Experience:
+2-5 years
 
-The generator should support:
+Date range:
+Next 30 days
 
-- Technology aliases
-- Role aliases
-- City aliases
-- Walk-in terminology
-- Date-related terms when useful
-
-It should also remove duplicate queries.
+The SearchContext is used by later stages of the pipeline.
 
 ---
 
-# 6. Source Discovery
+## 3. Query Generation
 
-The discovery layer searches public sources for candidate pages.
+The backend generates multiple search queries instead of depending on one query.
+
+For example:
+
+"walk-in interview" "Bengaluru" "Java"
+
+"walk-in drive" "Bengaluru" "Java"
+
+"walkin interview" "Bengaluru" "Java"
+
+"walk-in recruitment" "Bengaluru" "Java"
+
+"Java developer" "walk-in" "Bengaluru"
+
+"Java backend" "walk-in" "Bengaluru"
+
+Queries can later become more intelligent based on:
+
+- role
+- technology
+- location
+- experience
+- company
+- source
+- historical result quality
+
+Query generation should remain independent from the search provider.
+
+---
+
+## 4. Source Discovery
+
+The discovery engine uses configured search providers and public sources to find potentially relevant URLs.
 
 Possible sources include:
 
-- Search providers
+- Search engines
+- Search APIs
 - Company career pages
-- Public ATS
+- Public ATS pages
 - Job boards
-- Aggregators
-- Public APIs
-- RSS/XML feeds
+- Job aggregators
+- Public feeds
 - Sitemaps
+- Public APIs
 
-The system should use a source abstraction.
+The system should not assume that one source contains all relevant jobs.
 
-Example:
-
-    JobSource
-
-Possible implementations:
-
-    SearchEngineSource
-    CompanyCareerSource
-    JobBoardSource
-    ApiJobSource
-    RssSource
-
-The pipeline should not depend on one source permanently.
+The architecture must therefore support multiple source adapters.
 
 ---
 
-# 7. Candidate URLs
+## 5. Source Abstraction
 
-The discovery stage returns candidate URLs.
+External sources should be isolated behind a common interface.
 
-Example:
+Conceptually:
 
-    https://example.com/job/java-walkin-bengaluru
-    https://example.com/careers/java-developer
-    https://example.com/walkin-drive
+JobSource
 
-Each candidate should contain basic metadata such as:
+Responsibilities may include:
 
-- URL
-- Source
-- Discovery query
-- Discovery timestamp
+- accepting a discovery query
+- searching the source
+- returning candidate URLs
+- identifying the source
+- handling source-specific behaviour
 
----
+The discovery pipeline should not contain source-specific logic everywhere.
 
-# 8. URL Normalization
+For example:
 
-Before fetching pages, URLs should be normalized.
+SearchProviderAAdapter
+SearchProviderBAdapter
+GreenhouseAdapter
+LeverAdapter
 
-Possible operations:
+can implement the same source abstraction.
 
-- Normalize scheme
-- Normalize hostname
-- Remove safe tracking parameters
-- Normalize trailing slash where appropriate
-- Detect exact duplicates
-
-The system must be careful not to remove parameters that are required to identify the actual page.
+This makes it possible to add or replace sources without redesigning the complete pipeline.
 
 ---
 
-# 9. Page Fetching
+## 6. URL Normalization
 
-The Fetcher retrieves publicly accessible pages.
+The same page can appear multiple times with slightly different URLs.
 
-Input:
+Examples:
 
-    URL
+- tracking parameters
+- UTM parameters
+- URL fragments
+- trailing slashes
+- duplicated query parameters
 
-Output:
+Before fetching and processing pages, URLs should be normalized where possible.
 
-    RawDocument
+The system should preserve the original URL as well.
 
-The fetcher should handle:
+Important information:
 
+- original URL
+- normalized URL
+- source
+- discovered time
+
+URL normalization helps reduce unnecessary fetching and duplicate processing.
+
+---
+
+## 7. Page Fetching
+
+The fetcher retrieves the publicly accessible page.
+
+Responsibilities include:
+
+- HTTP requests
+- redirects
+- timeout handling
+- retry handling
+- backoff
+- content-type detection
+- HTTP status handling
+- response size limits
+- fetch timestamp
+- failure recording
+
+Example outcomes:
+
+- 200 → process page
+- 301/302 → follow redirect when allowed
+- 404 → page unavailable
+- 403 → access denied
+- timeout → retry according to policy
+- unsupported content → skip or route to appropriate parser
+
+One failed URL must not stop the complete discovery task.
+
+---
+
+## 8. Public Access Rules
+
+The platform should only process content that it is permitted to access.
+
+The system must:
+
+- respect robots.txt where applicable
+- respect website terms and access restrictions
+- use documented public APIs when available
+- avoid login-protected content
+- avoid bypassing CAPTCHA
+- avoid bypassing authentication
+- avoid bypassing technical access controls
+
+The goal is reliable public-web discovery, not aggressive crawling.
+
+---
+
+## 9. Raw Document
+
+The fetched response should be represented internally as a raw document before extracting normalized job information.
+
+Possible fields:
+
+- source URL
+- normalized URL
+- source name
+- raw content
+- content type
 - HTTP status
-- Redirects
-- Timeout
-- Connection failure
-- Response size
-- Content type
-- Retry
-- Backoff
+- content hash
+- discovered at
+- fetched at
 
-A single fetch failure should not terminate the discovery task.
+The raw document provides traceability.
+
+It also allows extraction logic to evolve without losing the original fetched data.
 
 ---
 
-# 10. Access Rules
+## 10. Content Cleaning
 
-The system should process only pages that are appropriately accessible.
+Raw HTML usually contains a large amount of irrelevant information.
 
-It should respect applicable:
+The processing layer should remove or reduce:
 
-- robots.txt rules
-- Terms of service
-- Access restrictions
-- Rate limits
+- scripts
+- styles
+- navigation
+- advertisements
+- repeated headers
+- footers
+- unrelated widgets
 
-The system must not bypass:
+The objective is to create useful page text while preserving important job information.
 
-- CAPTCHA
-- Login requirements
-- Paywalls
-- Authentication
-- Technical access controls
+Important content should include:
 
-If a source cannot be accessed appropriately, the pipeline should record the failure and continue.
-
----
-
-# 11. Raw Document
-
-The fetched page should be represented separately from the final job posting.
-
-Example:
-
-    RawDocument
-
-    sourceUrl
-    sourceName
-    rawContent
-    contentType
-    httpStatus
-    discoveredAt
-    fetchedAt
-    contentHash
-
-Raw data is useful for:
-
-- Debugging
-- Reprocessing
-- Improving extraction
-- Comparing page changes
-- Investigating incorrect results
+- job title
+- company
+- description
+- location
+- date
+- time
+- venue
+- eligibility
+- experience
+- skills
+- application instructions
 
 ---
 
-# 12. Content Cleaning
+## 11. Structured Data Extraction
 
-Raw HTML is converted into useful text.
+Before relying heavily on plain text, the system should inspect structured data available on the page.
 
-Pipeline:
-
-    Raw HTML
-       ↓
-    Remove scripts
-       ↓
-    Remove styles
-       ↓
-    Remove irrelevant elements
-       ↓
-    Extract visible content
-       ↓
-    Normalize whitespace
-       ↓
-    Clean Text
-
-The cleaner should preserve information that is useful for job extraction.
-
----
-
-# 13. Structured Data Extraction
-
-Before relying only on page text, the pipeline should inspect structured data.
-
-Important signals include:
+Possible sources:
 
 - JSON-LD
 - JobPosting structured data
 - OpenGraph metadata
-- Other structured metadata
+- HTML metadata
 
-JobPosting structured data may contain information such as:
+For example, a page may expose:
 
-- Job title
-- Hiring organization
-- Location
-- Employment type
-- Date posted
-- Description
-- Application information
+- job title
+- hiring organization
+- job location
+- employment type
+- description
+- date posted
 
-Structured data should be treated as an extraction signal, not automatic proof that the information is correct or current.
+Structured data is generally easier to parse than arbitrary page text.
 
----
+However, structured data should not automatically be trusted.
 
-# 14. Walk-in Detection
-
-The pipeline next determines whether the page represents a walk-in opportunity.
-
-Possible signals:
-
-- Walk-in interview
-- Walk-in drive
-- Walk-in recruitment
-- Walk-in hiring
-- Walkin
-- Interview date
-- Interview time
-- Interview venue
-- Recruitment drive
-
-Classification:
-
-    WALK_IN
-    NOT_WALK_IN
-    UNCERTAIN
-
-The detector should combine multiple signals.
-
-The presence of the word "walk-in" alone should not be sufficient.
+It must still pass validation.
 
 ---
 
-# 15. Job Extraction
+## 12. Walk-in Detection
 
-If the page is a strong walk-in candidate, extract structured information.
+This is one of the most important stages of V1.
 
-Target fields:
+The system must determine whether a discovered page actually represents a walk-in opportunity.
 
-- Company
-- Job title
-- Description
-- City
-- Country
-- Opportunity type
-- Event date
-- Event start time
-- Event end time
-- Venue
-- Experience
-- Skills
-- Application information
-- Source URL
-- Source name
+Possible classification:
 
-The extractor should support multiple strategies.
+- WALK_IN
+- NOT_WALK_IN
+- UNCERTAIN
 
-Priority:
+Signals may include phrases such as:
 
-    Structured Data
-         ↓
-    Source-specific Parser
-         ↓
-    DOM Extraction
-         ↓
-    Text Patterns
-         ↓
-    AI-assisted Extraction
+- walk-in interview
+- walk in interview
+- walk-in drive
+- walkin drive
+- walk-in recruitment
+- walk-in hiring
+- attend interview
+- interview venue
+- interview date
+- reporting time
+- venue address
 
-Not every page requires AI.
+The system should consider multiple signals rather than relying on a single keyword.
+
+For example, a page containing the word "walk" should not automatically be classified as a walk-in job.
 
 ---
 
-# 16. Raw vs Normalized Data
+## 13. Job Extraction
 
-Raw data and normalized data should remain separate.
+Once a page is considered potentially relevant, the system extracts job information.
 
-Example:
+Possible fields:
 
-    Raw Page
-       ↓
-    Raw Job Data
-       ↓
-    Normalized Job Posting
+- company
+- job title
+- description
+- city
+- country
+- job type
+- event date
+- event start time
+- event end time
+- venue
+- minimum experience
+- maximum experience
+- required skills
+- eligibility
+- application method
+- application URL
+- source URL
+- source name
 
-Raw values may contain:
+Extraction should preserve missing information rather than inventing values.
 
-    "Bangalore"
-
-while normalized data may contain:
-
-    "Bengaluru"
-
-The original information should still be preserved where useful.
+If the source does not provide a venue, the system should not generate one.
 
 ---
 
-# 17. Normalization
+## 14. Extraction Priority
 
-Normalization converts different representations into a common format.
+The preferred extraction order is:
+
+1. Structured data
+2. Source-specific parser
+3. DOM-based extraction
+4. Text pattern extraction
+5. Optional AI-assisted extraction
+
+Deterministic extraction should be preferred where practical.
+
+AI can be introduced later for difficult or ambiguous pages.
+
+AI output must still pass validation.
+
+AI should not be treated as a source of truth.
+
+---
+
+## 15. Normalization
+
+Different sources may represent the same information differently.
+
+The normalization stage converts extracted information into a consistent internal format.
 
 Examples:
 
-    Bangalore → Bengaluru
+Bangalore
+→ Bengaluru
 
-    3-5 years → min=3, max=5
+3-5 years
+→ minimumExperience = 3
+→ maximumExperience = 5
 
-    3+ years → min=3
+3+ years
+→ minimumExperience = 3
 
-Technology normalization:
+Walk in
+→ WALK_IN
 
-    Core Java
-    Java Developer
-    Java Backend
-    Java Engineer
+Java / Spring Boot / Microservices
+→ normalized skill list
 
-can map to a common technology representation for matching.
-
-Normalization should be deterministic wherever possible.
-
----
-
-# 18. Validation
-
-Validation checks whether extracted information is usable.
-
-Minimum checks may include:
-
-- Company exists
-- Job title exists
-- Source URL exists
-- Walk-in evidence exists
-- Location is valid
-- Event date is valid when present
-- Experience is not corrupted
-- Opportunity is not already expired
-
-Invalid data should be rejected or marked appropriately.
-
-The system should never fill missing values by guessing.
+Normalization makes downstream comparison and ranking easier.
 
 ---
 
-# 19. Deduplication
+## 16. Location Normalization
 
-The same opportunity can appear on multiple websites.
+Location should be normalized carefully.
 
-Example:
+Examples:
 
-    Company A
-    Java Developer
-    Bengaluru
-    15 September
+- Bangalore → Bengaluru
+- Bengaluru → Bengaluru
+- Gurgaon → Gurugram
 
-may appear on:
+The system should preserve the original source value as well.
 
-    Company Website
-    Job Board A
-    Job Board B
-    Aggregator A
+Possible model:
 
-These should normally become one logical opportunity.
+originalLocation:
+Bangalore
 
-Initial duplicate signals:
+normalizedCity:
+Bengaluru
 
-- Company
-- Normalized job title
-- City
-- Event date
-- Venue
-- Application URL
-
-More advanced similarity can be introduced later.
+This keeps the original source information available for transparency.
 
 ---
 
-# 20. Source Linking
+## 17. Experience Normalization
+
+Experience requirements can appear in many forms.
+
+Examples:
+
+"2-5 years"
+
+"2 to 5 years"
+
+"3+ years"
+
+"Minimum 3 years"
+
+"Freshers"
+
+These should be converted into a consistent internal representation.
+
+For example:
+
+minimumExperience:
+2
+
+maximumExperience:
+5
+
+Unknown values should remain unknown rather than being guessed.
+
+---
+
+## 18. Validation
+
+Extraction does not mean that a result is valid.
+
+Every candidate opportunity should pass validation.
+
+Minimum validation should check:
+
+- company exists
+- job title exists
+- source URL exists
+- walk-in evidence exists
+- location is available when required
+- event date is available or clearly inferable from the source
+- event is not already expired
+- extracted data is internally consistent
+
+Additional validation can check:
+
+- experience compatibility
+- technology relevance
+- application information
+- venue
+- interview timing
+
+Invalid or incomplete results should not automatically be shown as high-quality opportunities.
+
+---
+
+## 19. Validation Confidence
+
+The system should distinguish between:
+
+Extraction Confidence
+
+and
+
+Verification / Trust
+
+A page can be easy to parse but still contain unreliable information.
+
+For example:
+
+Extraction confidence:
+High
+
+Source verification:
+Medium
+
+These should remain separate concepts.
+
+The system should not present an unverified listing as officially verified.
+
+---
+
+## 20. Deduplication
+
+The public web frequently contains the same job on multiple pages.
+
+For example:
+
+- company website
+- job board
+- aggregator
+- recruitment blog
+- social post
+
+The system should identify likely duplicates.
+
+Potential matching signals:
+
+- company
+- normalized job title
+- city
+- event date
+- venue
+- application URL
+- source URL
+- description similarity
+
+A duplicate should normally become another source reference for the same opportunity instead of another result.
+
+---
+
+## 21. Source Linking
 
 One opportunity can have multiple sources.
 
 Example:
 
-    Opportunity
-       ├── Company Website
-       ├── Job Board
-       └── Aggregator
+Opportunity:
+Java Backend Developer Walk-in
+
+Sources:
+
+- Company career page
+- Job board
+- Recruitment website
 
 The system should retain these relationships.
 
-This provides:
+The original or strongest source should be preferred when possible.
 
-- Source transparency
-- Better trust signals
-- Better duplicate detection
-- Better source quality measurement
+Users should be able to see where the opportunity came from.
 
 ---
 
-# 21. Freshness
+## 22. Freshness
 
-Walk-in information changes quickly.
+Freshness is a first-class property.
 
-The pipeline should track:
+A walk-in opportunity can become useless once its event date has passed.
 
-- firstSeenAt
-- discoveredAt
-- lastCheckedAt
-- eventDate
-- status
+Possible freshness states:
 
-Possible status:
-
-    ACTIVE
-    AGING
-    EXPIRED
-
-Basic rule:
-
-    If eventDate is before the current date,
-    mark the opportunity as EXPIRED.
-
-Future states may include:
-
-    CANCELLED
-    RESCHEDULED
-
----
-
-# 22. Change Detection
-
-Change detection is not required for the first implementation, but the pipeline should leave room for it.
+- ACTIVE
+- AGING
+- EXPIRED
 
 Example:
 
-    Old:
-    Interview Date = 15 September
+Event in 10 days:
+ACTIVE
 
-    New:
-    Interview Date = 20 September
+Event tomorrow:
+ACTIVE
 
-The platform could later detect the change and update the opportunity.
+Event today:
+ACTIVE, depending on event time
 
-This becomes important when the same opportunity remains online but its details change.
+Event already finished:
+EXPIRED
+
+The system should avoid showing expired opportunities as active results.
 
 ---
 
-# 23. Trust Signals
+## 23. Freshness Refresh
 
-The pipeline can generate internal trust signals.
+Some information can change after the first discovery.
 
 Examples:
 
-- Company source found
-- Multiple independent sources
-- Event date confirmed
-- Venue confirmed
-- Application link available
-- Recently checked
-- Source has good historical quality
+- interview date changed
+- venue changed
+- application link changed
+- hiring drive cancelled
+- job removed
+- event postponed
 
-Important distinction:
+The architecture should support refreshing important pages later.
 
-    Extraction Confidence
-    =
-    How confident the system is that extraction is correct.
+V1 can use simple refresh mechanisms.
 
-    Verification
-    =
-    Evidence that the opportunity/details have been independently confirmed.
-
-These should not be treated as the same thing.
+More advanced change detection can be added later.
 
 ---
 
-# 24. Ranking
+## 24. Ranking
 
-After validation and deduplication, opportunities can be ranked.
+After validation and deduplication, valid opportunities should be ranked.
 
-Initial ranking signals:
+Ranking signals can include:
 
-- Technology match
-- Role match
-- City match
-- Experience match
-- Event date relevance
-- Freshness
-- Source quality
-- Completeness
-- Trust signals
+- technology relevance
+- role relevance
+- city match
+- experience match
+- event date
+- freshness
+- source quality
+- completeness
+- extraction confidence
+- verification signals
 
-The first version should use a simple transparent scoring system.
+The goal is not to show the largest number of results.
 
----
-
-# 25. Persistence
-
-The final normalized opportunity is stored in PostgreSQL.
-
-Important entities:
-
-    Company
-    JobPosting
-    JobSource
-    RawDocument
-    DiscoveryTask
-    Skill
-
-The database becomes the source for the user-facing search layer.
+The goal is to show the most useful results first.
 
 ---
 
-# 26. Complete Pipeline
+## 25. Search Relevance
 
-The complete V1 pipeline is:
+For example, if the user searches:
 
-    Search Request
-        ↓
-    SearchContext
-        ↓
-    Query Generator
-        ↓
-    Source Discovery
-        ↓
-    Candidate URLs
-        ↓
-    URL Normalization
-        ↓
-    Page Fetching
-        ↓
-    Raw Document
-        ↓
-    Content Cleaning
-        ↓
-    Structured Data Extraction
-        ↓
-    Walk-in Detection
-        ↓
-    Job Extraction
-        ↓
-    Normalization
-        ↓
-    Validation
-        ↓
-    Deduplication
-        ↓
-    Source Linking
-        ↓
-    Freshness
-        ↓
-    Ranking
-        ↓
-    PostgreSQL
-        ↓
-    Search API
-        ↓
-    User
+Java + Bengaluru + 2-5 years
+
+A result for:
+
+Java Backend Developer
+Bengaluru
+3 years
+Walk-in tomorrow
+
+should rank higher than:
+
+Java Developer
+Hyderabad
+8 years
+Walk-in next month
+
+Even if both pages were discovered successfully.
+
+Relevance should be calculated from the user's search context.
 
 ---
 
-# 27. Failure Handling
+## 26. Persistence
 
-Every pipeline stage should handle failures independently.
+After processing, normalized opportunities should be stored in PostgreSQL.
+
+The database becomes the source of truth for:
+
+- opportunities
+- companies
+- sources
+- discovery tasks
+- freshness state
+- normalized job information
+- relationships between opportunities and sources
+
+Raw documents may initially be stored in the database or another suitable storage layer depending on implementation.
+
+As scale increases, large raw documents can move to object storage.
+
+---
+
+## 27. Discovery Task
+
+A user search should create a discovery task rather than blocking the HTTP request until the complete web search finishes.
+
+Conceptually:
+
+Search Request
+→ Discovery Task
+→ Background Processing
+→ Results
+
+Possible task states:
+
+- CREATED
+- RUNNING
+- COMPLETED
+- PARTIALLY_COMPLETED
+- FAILED
+
+The task can also track:
+
+- queries generated
+- URLs discovered
+- URLs fetched
+- pages failed
+- opportunities extracted
+- opportunities rejected
+- duplicates removed
+- final opportunities stored
+
+This provides visibility into pipeline performance.
+
+---
+
+## 28. Asynchronous Processing
+
+Discovery is external-I/O-heavy and may take time.
+
+The backend should therefore process discovery asynchronously.
+
+V1 can use:
+
+- Spring Async
+- controlled thread pools
+- bounded concurrency
+- timeouts
+- retries
+
+A queue is not required in the first version.
+
+A queue can be introduced later when discovery volume justifies it.
+
+---
+
+## 29. Failure Isolation
+
+The pipeline should be designed so that individual failures do not stop the entire task.
 
 Example:
 
-    URL 1 → Success
-    URL 2 → Fetch Failed
-    URL 3 → Success
-    URL 4 → Extraction Failed
+100 URLs discovered
 
-The task should still complete.
+10 pages fail
 
-The system should record:
+90 pages continue through the pipeline.
 
-- Stage
-- URL
-- Error
-- Timestamp
-- Retry information
+Similarly:
 
-Failures should be observable rather than silently ignored.
+1 parser fails
+
+Other source parsers continue.
+
+This is important because public web sources are unpredictable.
 
 ---
 
-# 28. Idempotency
+## 30. Rate Limiting and Backpressure
 
-Running the same discovery task multiple times should not create duplicate opportunities.
+Different sources can have different limits.
 
-The pipeline should use:
+The system should avoid uncontrolled concurrent requests.
 
-- URL normalization
-- Content hashes
-- Opportunity identity
-- Database constraints
-- Duplicate detection
+Possible controls:
 
-Idempotency becomes especially important when asynchronous processing and retries are introduced.
+- per-source concurrency limits
+- request rate limits
+- timeouts
+- retry limits
+- exponential backoff
+- response size limits
 
----
-
-# 29. Observability
-
-Track pipeline-level metrics.
-
-Examples:
-
-    URLs discovered
-    URLs fetched
-    Fetch failures
-    Pages parsed
-    Walk-in candidates
-    Valid opportunities
-    Invalid opportunities
-    Duplicates
-    Expired opportunities
-    Average processing time
-
-These metrics will help identify where the system is losing quality.
+The goal is stable discovery rather than maximum request volume.
 
 ---
 
-# 30. Future Pipeline Evolution
+## 31. Idempotency
 
-V1:
+The same discovery request may run more than once.
 
-    Search Provider
-        ↓
-    Fetch
-        ↓
-    Extract
-        ↓
-    Validate
-        ↓
-    Deduplicate
-        ↓
-    Store
+The pipeline should avoid unnecessarily creating duplicate records.
 
-Future:
+Useful mechanisms include:
 
-    Multiple Discovery Sources
-        ↓
-    Source Prioritization
-        ↓
-    Distributed Fetching
-        ↓
-    Extraction Workers
-        ↓
-    Change Detection
-        ↓
-    Verification
-        ↓
-    Search Index
-        ↓
-    Personalization
+- normalized URLs
+- content hashes
+- source identifiers
+- opportunity fingerprints
+- database uniqueness constraints
+- idempotent processing
 
-The architecture should evolve without changing the core domain model.
+Idempotency becomes increasingly important as background processing and scheduled refreshes are introduced.
 
 ---
 
-# 31. Key Principle
+## 32. Observability
 
-The pipeline should optimize for:
+Each major pipeline stage should produce useful logs and metrics.
 
-    Relevance
-        >
-    Freshness
-        >
-    Trust
-        >
-    Quantity
+Important metrics include:
 
-The goal is not to collect the maximum number of pages.
+- discovery task duration
+- queries generated
+- URLs discovered
+- fetch success rate
+- fetch failure rate
+- extraction success rate
+- walk-in classification counts
+- validation rejection count
+- duplicate count
+- expired count
+- opportunities created
+- opportunities updated
 
-The goal is to produce the maximum number of useful opportunities from the collected data.
+This helps identify where the system is losing quality.
+
+---
+
+## 33. Source Quality
+
+Not all sources should be treated equally.
+
+The system can maintain source-level signals such as:
+
+- source type
+- historical success rate
+- freshness
+- extraction quality
+- duplicate frequency
+- availability
+- trust level
+
+For example:
+
+Official company source
+→ high source quality
+
+Unknown aggregator
+→ lower source quality
+
+Source quality should influence ranking and trust signals, but should not blindly determine whether a result is valid.
+
+---
+
+## 34. Cost Awareness
+
+The pipeline should track the cost of discovering useful opportunities.
+
+A useful future metric is:
+
+Cost per valid opportunity
+
+This becomes important when external search APIs, AI extraction, or paid data providers are introduced.
+
+The system should avoid spending expensive resources on obviously irrelevant pages.
+
+For example:
+
+Walk-in detection can happen before expensive AI extraction.
+
+---
+
+## 35. Deterministic First, AI When Valuable
+
+The initial pipeline should prefer deterministic processing.
+
+Example:
+
+Search
+→ Fetch
+→ Structured Data
+→ Rules / Parsers
+→ Normalize
+→ Validate
+
+AI can be added for:
+
+- ambiguous walk-in detection
+- difficult page extraction
+- semantic job matching
+- duplicate similarity
+- classification
+- missing-field interpretation
+
+AI should improve the pipeline, not become a mandatory dependency for every page.
+
+---
+
+## 36. Pipeline Data Separation
+
+The system should conceptually separate:
+
+Raw Data
+→ Extracted Data
+→ Normalized Data
+→ Validated Opportunity
+
+This prevents extraction changes from destroying source information.
+
+Example:
+
+Raw source says:
+
+"Walk in interview at our Bangalore office"
+
+Extracted:
+
+city = Bangalore
+
+Normalized:
+
+city = Bengaluru
+
+Validated:
+
+valid walk-in opportunity
+
+Each layer has a different responsibility.
+
+---
+
+## 37. Frontend Boundary
+
+The frontend does not perform discovery.
+
+The frontend is responsible for:
+
+- search form
+- loading state
+- discovery status
+- result listing
+- filtering
+- opportunity details
+- source links
+- error handling
+
+The backend is responsible for:
+
+- search
+- discovery
+- fetching
+- extraction
+- normalization
+- validation
+- deduplication
+- freshness
+- ranking
+- persistence
+
+This keeps the system secure, testable, and scalable.
+
+The frontend application exists in the repository from Day 1, but backend discovery and APIs are the primary implementation focus initially.
+
+Frontend implementation begins after the backend pipeline and APIs are reliable enough to consume.
+
+---
+
+## 38. V1 Pipeline
+
+The initial production-oriented pipeline should be:
+
+1. Receive search request
+2. Validate request
+3. Create SearchContext
+4. Create discovery task
+5. Generate search queries
+6. Search configured public sources
+7. Collect candidate URLs
+8. Normalize URLs
+9. Remove obvious duplicate URLs
+10. Fetch pages
+11. Store raw document information
+12. Clean page content
+13. Read structured data
+14. Detect walk-in signals
+15. Extract job information
+16. Normalize fields
+17. Validate opportunity
+18. Deduplicate opportunities
+19. Calculate freshness
+20. Calculate relevance
+21. Store valid opportunities
+22. Expose results through API
+23. Frontend displays results
+
+This is the core V1 discovery engine.
+
+---
+
+## 39. Future Pipeline Improvements
+
+The architecture should allow future additions such as:
+
+- more search providers
+- direct company career-page crawling
+- ATS integrations
+- scheduled discovery
+- scheduled refresh
+- change detection
+- source quality scoring
+- semantic matching
+- AI-assisted extraction
+- AI-assisted classification
+- better duplicate detection
+- search index
+- Redis caching
+- distributed workers
+- queue-based processing
+- object storage for raw documents
+- personalized recommendations
+
+These should be introduced when actual product requirements justify them.
+
+---
+
+## 40. Scalability Direction
+
+V1 should remain a modular monolith.
+
+Initial architecture:
+
+Frontend
+→ Spring Boot Backend
+→ PostgreSQL
+
+Backend discovery:
+
+Discovery Task
+→ Controlled Async Workers
+→ External Sources
+→ Processing Pipeline
+→ PostgreSQL
+
+As volume increases, the architecture can evolve toward:
+
+Frontend
+→ Load Balancer
+→ Multiple API Instances
+→ Discovery Queue
+→ Discovery Workers
+→ PostgreSQL
+→ Redis
+→ Search Index
+→ Object Storage
+
+The pipeline stages should remain logically separated even if they initially run inside one application.
+
+---
+
+## 41. Core Design Principles
+
+The data pipeline should follow these principles:
+
+### 1. Relevance over quantity
+
+A smaller set of useful jobs is better than hundreds of irrelevant results.
+
+### 2. Freshness over volume
+
+An expired walk-in opportunity has little value.
+
+### 3. Trust over hype
+
+Always preserve the source and avoid presenting assumptions as facts.
+
+### 4. Never invent missing information
+
+Unknown data should remain unknown.
+
+### 5. Raw data and normalized data are different
+
+Keep source information separate from processed information.
+
+### 6. One failure should not stop discovery
+
+Public web sources will fail.
+
+### 7. Deduplicate before showing results
+
+Users should not see the same opportunity repeatedly.
+
+### 8. Source transparency is mandatory
+
+Users should be able to identify where an opportunity came from.
+
+### 9. Deterministic processing first
+
+Use rules and structured data wherever possible.
+
+### 10. Scale only when required
+
+Do not introduce Kafka, Kubernetes, microservices, or a search engine before the product needs them.
+
+---
+
+## Final Pipeline
+
+The final conceptual pipeline for V1 is:
+
+User Search
+→ Search Context
+→ Discovery Task
+→ Query Generation
+→ Source Discovery
+→ URL Normalization
+→ Page Fetching
+→ Raw Document
+→ Content Processing
+→ Structured Data Extraction
+→ Walk-in Detection
+→ Job Extraction
+→ Normalization
+→ Validation
+→ Opportunity Deduplication
+→ Freshness
+→ Ranking
+→ PostgreSQL
+→ Search API
+→ Frontend
+
+The most important responsibility of this pipeline is simple:
+
+**Find relevant upcoming walk-in opportunities from the public web, remove noise and duplicates, keep results fresh, and show users the original source.**
