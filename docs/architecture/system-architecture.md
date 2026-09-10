@@ -2,11 +2,11 @@
 
 ## 1. Purpose
 
-The Job Discovery Platform is designed as a source-independent job discovery system.
+The Job Discovery Platform is a web product for discovering relevant job opportunities from the public web.
 
-The initial product focuses on walk-in opportunities.
+V1 focuses on walk-in opportunities.
 
-The architecture should allow the platform to later support:
+The system is designed so that the discovery engine can later support:
 
 - Regular jobs
 - Company-specific jobs
@@ -14,121 +14,212 @@ The architecture should allow the platform to later support:
 - Internships
 - Saved searches
 - Notifications
-- Personalized job discovery
+- Personalized discovery
 
-The first implementation should use a modular monolith.
+The architecture starts as a modular monolith.
 
-Microservices should not be introduced until real scale or operational requirements justify them.
+The backend is the primary development focus in V1 because the main technical challenge is discovering, processing, validating, and ranking real job opportunities from the public web.
+
+The frontend is part of the product and repository from the beginning, but it will be implemented after the core backend pipeline and APIs are working reliably.
 
 ---
 
-# 2. Architecture Goals
+# 2. Repository Architecture
 
-The architecture should provide:
+The project uses one GitHub repository.
 
-- Simple development
-- Clear module boundaries
-- Source independence
-- Reliable processing
-- Data quality
-- Freshness
+    job-discovery-platform/
+    ├── README.md
+    ├── docs/
+    │   ├── product/
+    │   ├── requirements/
+    │   └── architecture/
+    ├── research/
+    ├── roadmap/
+    ├── backend/
+    ├── frontend/
+    ├── infrastructure/
+    └── .github/
+
+The two application areas are:
+
+    backend/
+    frontend/
+
+The backend is developed first.
+
+The frontend is implemented later using the stable backend APIs.
+
+---
+
+# 3. High-Level System
+
+The complete product architecture is:
+
+    ┌──────────────────────────┐
+    │        FRONTEND          │
+    │                          │
+    │ Search                   │
+    │ Results                  │
+    │ Opportunity Details      │
+    └────────────┬─────────────┘
+                 │
+                 │ HTTP / REST API
+                 ▼
+    ┌──────────────────────────┐
+    │         BACKEND          │
+    │                          │
+    │ API                      │
+    │ Discovery                │
+    │ Search                   │
+    │ Ranking                  │
+    │ Processing               │
+    └────────────┬─────────────┘
+                 │
+                 ▼
+    ┌──────────────────────────┐
+    │    DISCOVERY PIPELINE    │
+    │                          │
+    │ Query Generation         │
+    │ Source Discovery         │
+    │ URL Processing           │
+    │ Page Fetching            │
+    │ Extraction               │
+    │ Normalization            │
+    │ Validation               │
+    │ Deduplication            │
+    │ Freshness                │
+    └────────────┬─────────────┘
+                 │
+                 ▼
+    ┌──────────────────────────┐
+    │       PostgreSQL         │
+    │                          │
+    │ Opportunities            │
+    │ Companies                │
+    │ Sources                  │
+    │ Raw Documents            │
+    │ Discovery Tasks          │
+    └──────────────────────────┘
+
+---
+
+# 4. Architecture Priorities
+
+The architecture prioritizes:
+
+1. Correct discovery
+2. Data quality
+3. Source transparency
+4. Freshness
+5. Deduplication
+6. Relevance
+7. Reliability
+8. Simplicity
+9. Future scalability
+
+Infrastructure complexity is intentionally kept low in V1.
+
+---
+
+# 5. Frontend
+
+The frontend is a separate application inside the same repository.
+
+    frontend/
+
+It is not part of the backend codebase.
+
+The frontend communicates with the backend through REST APIs.
+
+## Responsibilities
+
+- Search interface
+- Search filters
+- Discovery status
+- Results display
+- Opportunity details
+- Source navigation
+- Loading states
+- Error states
+- Empty states
+
+The frontend should not contain discovery logic.
+
+For example, the frontend should not:
+
+- Search Google directly
+- Fetch job websites
+- Parse HTML
+- Detect walk-ins
+- Deduplicate opportunities
+- Decide whether an opportunity is expired
+
+These responsibilities belong to the backend.
+
+---
+
+# 6. Backend
+
+The backend is the core of the product.
+
+It is responsible for:
+
+- Search requests
+- Discovery tasks
+- Query generation
+- Source discovery
+- Page fetching
+- Extraction
+- Normalization
+- Validation
 - Deduplication
-- Easy testing
-- Easy future expansion
-- Controlled infrastructure complexity
+- Freshness
+- Ranking
+- Persistence
+- Search
 
-The system should be built around product requirements rather than technology choices.
-
----
-
-# 3. High-Level Architecture
-
-    ┌───────────────────────┐
-    │       Frontend        │
-    │   Search / Results    │
-    └───────────┬───────────┘
-                │
-                ▼
-    ┌───────────────────────┐
-    │       REST API        │
-    │ Search / Opportunities │
-    └───────────┬───────────┘
-                │
-                ▼
-    ┌─────────────────────────────────┐
-    │        Application Layer        │
-    │                                 │
-    │ Discovery                       │
-    │ Search                          │
-    │ Ranking                         │
-    │                                 │
-    └──────────────┬──────────────────┘
-                   │
-                   ▼
-    ┌─────────────────────────────────┐
-    │         Processing Layer        │
-    │                                 │
-    │ Query Generation                │
-    │ Source Discovery                │
-    │ Fetching                        │
-    │ Extraction                      │
-    │ Normalization                   │
-    │ Validation                      │
-    │ Deduplication                   │
-    │ Freshness                       │
-    └──────────────┬──────────────────┘
-                   │
-                   ▼
-    ┌─────────────────────────────────┐
-    │          Data Layer             │
-    │                                 │
-    │ PostgreSQL                      │
-    │ Raw Documents                   │
-    │ Opportunities                   │
-    │ Sources                         │
-    │ Discovery Tasks                 │
-    └─────────────────────────────────┘
+The backend starts as a modular monolith.
 
 ---
 
-# 4. Main Components
+# 7. Backend Logical Architecture
 
-The system consists of the following logical components:
+The backend can be divided into logical modules:
 
-    API
-    Discovery
-    Source Adapters
-    Fetcher
-    Extraction
-    Normalization
-    Validation
-    Deduplication
-    Freshness
-    Ranking
-    Search
-    Persistence
-    Common
+    api
+    discovery
+    extraction
+    normalization
+    validation
+    deduplication
+    freshness
+    ranking
+    search
+    persistence
+    common
 
-These are logical modules.
+These are modules inside one Spring Boot application.
 
-They do not need to be separate deployable services in V1.
+They are not separate deployable services in V1.
 
 ---
 
-# 5. API Layer
+# 8. API Layer
 
-The API layer handles requests from the frontend or other clients.
+The API layer is the boundary between frontend and backend.
 
 Responsibilities:
 
-- Request validation
-- Authentication in the future
-- API response formatting
-- Starting discovery tasks
-- Returning search results
-- Returning task status
+- Receive requests
+- Validate requests
+- Create discovery tasks
+- Return task information
+- Return search results
+- Return opportunity details
+- Return errors
 
-Example endpoint:
+Example:
 
     POST /api/v1/discovery/search
 
@@ -142,26 +233,28 @@ Future:
 
 ---
 
-# 6. Discovery Module
+# 9. Discovery Module
 
 The Discovery module coordinates the discovery process.
 
 Responsibilities:
 
-- Create discovery task
+- Create DiscoveryTask
 - Build SearchContext
-- Generate queries
+- Generate search queries
 - Invoke source adapters
 - Collect candidate URLs
-- Start processing
+- Start downstream processing
 
-The Discovery module should orchestrate the workflow but should not contain detailed HTML parsing logic.
+The Discovery module should orchestrate the pipeline.
+
+It should not contain detailed HTML parsing or extraction logic.
 
 ---
 
-# 7. Source Adapter Layer
+# 10. Source Adapter Layer
 
-Different sources should be hidden behind a common interface.
+External sources should be isolated behind interfaces.
 
 Example:
 
@@ -179,54 +272,92 @@ Possible implementations:
     ApiJobSource
     RssSource
 
-This prevents the rest of the application from becoming dependent on one provider.
+The rest of the application should depend on the interface rather than a specific provider.
 
 ---
 
-# 8. Search Provider Independence
+# 11. Search Provider Independence
 
-The architecture should avoid:
+The architecture should avoid direct coupling between business logic and external provider SDKs.
 
-    Business Logic
-        ↓
-    Provider-specific API
+Preferred:
 
-Instead:
-
-    Business Logic
+    Discovery
         ↓
     JobSource
         ↓
     Provider Adapter
+        ↓
+    External Provider
 
-This allows the product to replace or add providers without rewriting the discovery pipeline.
+This makes it possible to:
+
+- Replace a provider
+- Add another provider
+- Disable a provider
+- Compare providers
+- Measure provider quality
+
+without rewriting the discovery engine.
 
 ---
 
-# 9. Fetcher
+# 12. Fetcher
 
-The Fetcher is responsible only for retrieving public documents.
+The Fetcher retrieves publicly accessible pages.
 
 Responsibilities:
 
 - HTTP requests
 - Timeout
 - Redirect handling
+- Response validation
 - Retry
 - Backoff
-- Response validation
+- Content type handling
 - Fetch metadata
 
-It should not contain:
+The Fetcher should not contain business logic such as:
 
 - Walk-in detection
-- Job extraction
-- Ranking
-- Business rules
+- Job ranking
+- Deduplication
+- User search logic
 
 ---
 
-# 10. Extraction Module
+# 13. External Web Access
+
+The public web is an unreliable external dependency.
+
+Pages may:
+
+- Disappear
+- Change structure
+- Return errors
+- Change content
+- Block automated requests
+- Become outdated
+
+The architecture should expect failures.
+
+One source or page failing must not stop the complete discovery task.
+
+Only appropriately accessible public pages should be processed.
+
+The system must not bypass:
+
+- CAPTCHA
+- Login
+- Authentication
+- Technical access controls
+- Other restrictions intended to prevent automated access
+
+Applicable crawling restrictions and source terms should be respected.
+
+---
+
+# 14. Extraction Module
 
 The Extraction module converts raw documents into candidate job information.
 
@@ -235,102 +366,165 @@ Responsibilities:
 - HTML parsing
 - Text extraction
 - JSON-LD extraction
-- JobPosting extraction
-- Source-specific extraction
+- JobPosting structured-data extraction
+- Source-specific parsing
 - Pattern-based extraction
 - Optional AI-assisted extraction
 
-Interface:
+Extraction should use the simplest reliable method first.
 
-    JobExtractor
+Preferred order:
 
-Possible implementations:
+    Structured Data
+        ↓
+    Source-specific Parser
+        ↓
+    DOM Extraction
+        ↓
+    Text Patterns
+        ↓
+    AI-assisted Extraction
 
-    StructuredDataExtractor
-    HtmlJobExtractor
-    WalkInExtractor
-    SourceSpecificExtractor
+AI should not be mandatory for every page.
 
 ---
 
-# 11. Normalization Module
+# 15. Walk-in Detection
 
-Normalization creates a common representation.
+Walk-in detection is a dedicated part of the extraction pipeline.
 
-Responsibilities:
+Possible signals:
 
-- City normalization
-- Company normalization
-- Job title normalization
-- Skill normalization
-- Experience normalization
-- Date normalization
-- Time normalization
+- Walk-in interview
+- Walk-in drive
+- Walk-in recruitment
+- Walk-in hiring
+- Walkin
+- Interview date
+- Interview time
+- Interview venue
+- Recruitment drive
+
+Possible classification:
+
+    WALK_IN
+    NOT_WALK_IN
+    UNCERTAIN
+
+The system should use multiple signals instead of relying on a single keyword.
+
+---
+
+# 16. Normalization Module
+
+The Normalization module converts source-specific representations into a common format.
+
+Examples:
+
+    Bangalore → Bengaluru
+
+    3-5 years → min=3, max=5
+
+    3+ years → min=3
+
+Technology aliases can also be normalized.
 
 Example:
 
-    Bangalore
-    Bengaluru
-    Bangalore Urban
+    Core Java
+    Java Developer
+    Java Backend
+    Java Engineer
 
-can be mapped to a canonical representation where appropriate.
+can be mapped into a common representation for matching.
 
 ---
 
-# 12. Validation Module
+# 17. Validation Module
 
-Validation ensures that extracted data is usable.
+The Validation module checks whether extracted information is usable.
 
-Responsibilities:
+Validation may include:
 
-- Required field validation
-- Date validation
+- Company validation
+- Job title validation
 - Location validation
-- Walk-in validation
+- Event date validation
 - Experience validation
-- Source validation
-- Expiry validation
+- Walk-in evidence
+- Source URL validation
+- Expiration checks
 
-The module should reject unreliable information instead of guessing.
+The system should reject unreliable information rather than guess.
 
 ---
 
-# 13. Deduplication Module
+# 18. Deduplication Module
 
-The Deduplication module identifies opportunities representing the same real-world event/job.
+The same opportunity can appear on multiple websites.
 
-Initial matching:
+Example:
 
-    Company
-    +
-    Job Title
-    +
-    City
-    +
-    Event Date
+    Company A
+    Java Developer
+    Bengaluru
+    15 September
 
-Additional signals:
+may appear on:
 
+    Company Website
+    Job Board A
+    Job Board B
+    Aggregator
+
+These should normally represent one logical opportunity.
+
+Initial duplicate signals:
+
+- Company
+- Normalized job title
+- City
+- Event date
 - Venue
 - Application URL
-- Description similarity
-- Source relationship
 
-The module should eventually support confidence-based matching.
+More advanced similarity can be added later.
 
 ---
 
-# 14. Freshness Module
+# 19. Source Model
 
-Freshness determines whether an opportunity should remain active.
+An opportunity can have multiple sources.
 
-Responsibilities:
+Example:
 
-- Event date checks
-- Last checked timestamp
-- Aging calculation
-- Expiration
-- Future change detection
+    Opportunity
+       ├── Company Website
+       ├── Job Board
+       └── Aggregator
+
+The system should maintain this relationship instead of storing only one source.
+
+This provides:
+
+- Source transparency
+- Better duplicate detection
+- Trust signals
+- Source quality measurement
+
+---
+
+# 20. Freshness Module
+
+Walk-in opportunities are time-sensitive.
+
+The system should track:
+
+- firstSeenAt
+- discoveredAt
+- lastCheckedAt
+- eventDate
+- status
 
 Initial states:
 
@@ -338,50 +532,62 @@ Initial states:
     AGING
     EXPIRED
 
----
+Basic rule:
 
-# 15. Ranking Module
+    eventDate < current date
+        ↓
+    EXPIRED
 
-Ranking determines the order in which results are shown.
+Future states may include:
 
-Example scoring signals:
-
-    Technology Match
-    Role Match
-    City Match
-    Experience Match
-    Date Relevance
-    Freshness
-    Source Quality
-    Completeness
-
-The ranking implementation should initially remain simple.
+    CANCELLED
+    RESCHEDULED
 
 ---
 
-# 16. Search Module
+# 21. Ranking Module
 
-The Search module handles queries against stored opportunities.
+The Ranking module determines result order.
 
-Responsibilities:
+Initial signals:
 
-- Filter by city
-- Filter by keyword
-- Filter by experience
-- Filter by date
-- Filter by opportunity type
-- Sort by relevance
-- Return active opportunities
+1. Technology match
+2. Role match
+3. City match
+4. Experience match
+5. Event date relevance
+6. Freshness
+7. Source quality
+8. Information completeness
 
-PostgreSQL can handle the initial search requirements.
+The first version should use a simple scoring model.
 
-A dedicated search engine should only be introduced when PostgreSQL is no longer sufficient.
+Ranking should be measurable and improvable.
 
 ---
 
-# 17. Persistence Layer
+# 22. Search Module
 
-PostgreSQL is the initial primary database.
+The Search module retrieves stored opportunities based on user intent.
+
+Initial filters:
+
+- City
+- Keyword
+- Experience
+- Date range
+- Opportunity type
+- Company when required
+
+PostgreSQL is sufficient for the initial search requirements.
+
+A dedicated search engine can be introduced later if search complexity or dataset size requires it.
+
+---
+
+# 23. Persistence Layer
+
+PostgreSQL is the initial source of truth.
 
 Potential tables:
 
@@ -393,7 +599,7 @@ Potential tables:
     job_skills
     job_posting_skills
 
-Future tables:
+Future:
 
     users
     saved_searches
@@ -402,88 +608,50 @@ Future tables:
 
 ---
 
-# 18. Domain Model
+# 24. Raw Data Architecture
 
-The domain should be generic enough for future opportunity types.
+Raw source data should be separated from normalized opportunity data.
 
-Example:
+Flow:
 
-    JobOpportunityType
-
-    WALK_IN
-    JOB
-    HIRING_DRIVE
-
-V1 primarily uses:
-
-    WALK_IN
-
-The architecture should not create a completely separate system for every opportunity type.
-
----
-
-# 19. Opportunity Model
-
-A JobPosting should contain concepts such as:
-
-- Company
-- Title
-- Description
-- Location
-- Opportunity type
-- Experience
-- Skills
-- Event information
-- Source
-- Freshness
-- Status
-- Timestamps
-
-The model should distinguish between:
-
-    Job
-
-and:
-
-    Source information about the Job
-
-One logical opportunity may have multiple sources.
-
----
-
-# 20. Raw Data Architecture
-
-Raw source data should be separated from normalized data.
-
-    External Source
-          ↓
+    External Page
+        ↓
     Raw Document
-          ↓
+        ↓
     Extraction
-          ↓
-    Normalized Opportunity
+        ↓
+    Normalized JobPosting
 
-This allows extraction logic to evolve without losing the original source information.
+This allows the system to:
+
+- Reprocess old documents
+- Improve extraction logic
+- Debug incorrect results
+- Detect page changes
 
 ---
 
-# 21. Asynchronous Processing
+# 25. Asynchronous Processing
 
-Discovery can take longer than a normal API request.
+Discovery can involve many external requests and should not run entirely inside a normal HTTP request.
 
-Therefore:
+Flow:
 
-    User
-      ↓
-    API
-      ↓
-    Discovery Task
-      ↓
+    Frontend
+       ↓
+    Backend API
+       ↓
+    Create Discovery Task
+       ↓
     Async Processing
-      ↓
-    Database
-      ↓
-    Results
+       ↓
+    Discovery Pipeline
+       ↓
+    PostgreSQL
+       ↓
+    Backend API
+       ↓
+    Frontend
 
 The API should return quickly after creating the discovery task.
 
@@ -496,79 +664,103 @@ Example:
 
 ---
 
-# 22. V1 Async Strategy
+# 26. V1 Async Strategy
 
-V1 should use a simple controlled asynchronous mechanism.
-
-For example:
+V1 can use:
 
     Spring Async
-    +
-    Thread Pool
+        +
+    Controlled Thread Pool
 
-This is sufficient for the initial product.
+This keeps the architecture simple.
 
-A distributed queue such as Kafka can be introduced later if:
+A distributed queue such as Kafka can be introduced later if actual workload requires:
 
-- Work volume becomes large
-- Multiple workers are required
-- Retry requirements become complex
-- Event-driven processing provides measurable value
-
----
-
-# 23. Transaction Boundaries
-
-Database transactions should be kept around meaningful units of work.
-
-Examples:
-
-    Save normalized opportunity
-
-    Update discovery task status
-
-    Save source relationship
-
-Large network operations should not run inside database transactions.
-
-Do not keep database transactions open while fetching external pages.
+- Multiple workers
+- Durable task queues
+- High processing volume
+- More advanced retry handling
+- Distributed processing
 
 ---
 
-# 24. Error Isolation
+# 27. Error Isolation
 
-External sources are unreliable.
+Failures should be isolated.
 
-Architecture should ensure:
+Example:
 
-    Source A fails
-         ↓
-    Source B continues
-         ↓
-    Source C continues
+    Source A
+        ↓
+    Failed
+
+    Source B
+        ↓
+    Success
+
+    Source C
+        ↓
+    Success
+
+The discovery task should continue.
 
 Similarly:
 
-    Page A extraction fails
-         ↓
-    Page B continues
+    Page A
+        ↓
+    Extraction Failed
 
-Failure should be isolated at the smallest useful unit.
+    Page B
+        ↓
+    Extraction Successful
+
+Page A should not prevent Page B from being processed.
 
 ---
 
-# 25. Observability
+# 28. Idempotency
 
-The system should provide logs and metrics for:
+The pipeline should be safe to retry.
 
-- Discovery tasks
-- Source requests
-- Fetch failures
-- Extraction failures
-- Validation failures
-- Duplicate detection
+The same page or opportunity may be processed more than once.
+
+Possible mechanisms:
+
+- URL normalization
+- Content hashes
+- Unique database constraints
+- Opportunity identity
+- Discovery task IDs
+
+Example:
+
+    Same Opportunity
+        ↓
+    Same logical identity
+        ↓
+    Update existing record
+
+instead of:
+
+    Create another duplicate
+
+---
+
+# 29. Observability
+
+The system should produce useful logs and metrics.
+
+Track:
+
+- Discovery task
+- Source
+- URL
+- Fetch result
+- Extraction result
+- Validation result
+- Duplicate result
 - Processing time
-- Database operations
+- Database operation
 
 Important identifiers:
 
@@ -582,16 +774,16 @@ These identifiers make debugging easier.
 
 ---
 
-# 26. Security
+# 30. Security
 
-The system should protect:
+Protect:
 
 - Database credentials
 - API keys
 - Search provider credentials
-- Internal endpoints
+- Internal configuration
 
-Secrets should not be stored in source code.
+Secrets should never be committed to Git.
 
 Use:
 
@@ -599,29 +791,13 @@ Use:
 - Secret management
 - Secure configuration
 
-Future authentication/authorization will be added when user accounts are introduced.
+Authentication and authorization can be added when user accounts are introduced.
 
 ---
 
-# 27. External Dependency Isolation
+# 31. Deployment Architecture — Initial
 
-External services should be accessed through adapters.
-
-Examples:
-
-    SearchProviderAdapter
-    JobBoardAdapter
-    CompanyCareerAdapter
-
-The core domain should not depend directly on SDK-specific classes.
-
-This makes external provider replacement easier.
-
----
-
-# 28. Deployment Architecture — V1
-
-Initial deployment can remain simple:
+The first deployable architecture can remain simple.
 
     Internet
        ↓
@@ -631,116 +807,132 @@ Initial deployment can remain simple:
        ↓
     PostgreSQL
 
-The backend can contain all logical modules in one application.
+The backend remains a single deployable application.
 
-Docker can be introduced for reproducible deployment.
+The frontend remains a separate application.
 
-Cloud deployment can be added after the local product works reliably.
+No microservices are required initially.
 
 ---
 
-# 29. Future Deployment Architecture
+# 32. Future Deployment Architecture
 
-At higher scale:
+As workload increases:
 
+    Internet
+       ↓
     Load Balancer
-         ↓
-    API Instances
-         ↓
-    Job Queue
-         ↓
-    Worker Instances
-         ↓
-    Discovery Workers
-    Fetch Workers
-    Extraction Workers
-         ↓
-    PostgreSQL
-         +
-    Cache
-         +
-    Search Index
-         +
-    Object Storage
+       ↓
+    ┌───────────────┐
+    │ API Instance 1│
+    │ API Instance 2│
+    │ API Instance 3│
+    └───────┬───────┘
+            ↓
+       Job Queue
+            ↓
+    ┌─────────────────────┐
+    │ Processing Workers  │
+    │                     │
+    │ Discovery           │
+    │ Fetching            │
+    │ Extraction          │
+    │ Validation          │
+    └──────────┬──────────┘
+               ↓
+    ┌─────────────────────┐
+    │ Data Layer          │
+    │                     │
+    │ PostgreSQL          │
+    │ Redis               │
+    │ Search Index        │
+    │ Object Storage      │
+    └─────────────────────┘
 
-The logical modules remain similar even if they later become separate services.
+This is a future evolution, not a V1 requirement.
 
 ---
 
-# 30. Why Modular Monolith First
+# 33. Why Modular Monolith First
 
 A modular monolith provides:
 
 - Faster development
 - Easier local testing
-- Simpler deployment
+- Simple deployment
 - Lower infrastructure cost
 - Easier debugging
-- Clear module boundaries
+- Clear internal boundaries
 
-Microservices introduce:
+Microservices would introduce additional complexity such as:
 
 - Network communication
 - Service discovery
 - Distributed tracing
-- More deployments
-- More monitoring
+- Multiple deployments
 - More failure modes
+- More operational work
 
-These costs are not justified for the first version.
+That complexity is not justified at the beginning.
 
 ---
 
-# 31. Architecture Evolution
+# 34. Architecture Evolution
 
-The architecture should evolve approximately like this:
+The system can evolve gradually.
 
-    Stage 1
-
-    Modular Monolith
-    PostgreSQL
-    Async Thread Pool
-
-        ↓
-
-    Stage 2
+Stage 1:
 
     Modular Monolith
     PostgreSQL
-    Redis
-    Search Index
+    Async Processing
 
-        ↓
+Stage 2:
 
-    Stage 3
+    Modular Monolith
+    PostgreSQL
+    Redis if required
+    Search optimization
+
+Stage 3:
 
     Queue
     Multiple Workers
-    Horizontal Scaling
+    Horizontal API Scaling
 
-        ↓
+Stage 4:
 
-    Stage 4
+    Search Index
+    Object Storage
+    Advanced Refresh Processing
 
-    Selected Modules as Services
+Stage 5:
 
-The transition should happen only when measurements justify it.
+    Selected Services
+    Distributed Infrastructure
+    Multi-region Deployment
+
+The transition should be driven by actual bottlenecks.
 
 ---
 
-# 32. Key Architecture Principle
+# 35. Main Architectural Boundary
 
-The most important architectural boundary is:
+The most important boundary is:
 
     External Web
-          ↓
+        ↓
     Source Adapters
-          ↓
+        ↓
     Discovery Pipeline
-          ↓
+        ↓
     Domain Model
-          ↓
-    Search / Product
+        ↓
+    Database
+        ↓
+    API
+        ↓
+    Frontend
 
 The external web is unpredictable.
 
@@ -748,45 +940,63 @@ The internal domain model should remain stable.
 
 ---
 
-# 33. Final Architecture
+# 36. Core Architecture Principle
 
-V1:
+The system should optimize for:
 
-    Frontend
-       ↓
-    REST API
-       ↓
-    Modular Monolith
-       ├── Discovery
-       ├── Source Adapters
-       ├── Fetcher
-       ├── Extraction
-       ├── Normalization
-       ├── Validation
-       ├── Deduplication
-       ├── Freshness
-       ├── Ranking
-       └── Search
-       ↓
-    PostgreSQL
+    Relevance
+        >
+    Freshness
+        >
+    Trust
+        >
+    Quantity
 
-Future:
+The goal is not to collect the maximum number of pages.
 
-    Frontend
-       ↓
-    API Layer
-       ↓
-    Queue / Workers
-       ├── Discovery
-       ├── Fetching
-       ├── Extraction
-       ├── Validation
-       └── Processing
-       ↓
-    Data Platform
-       ├── PostgreSQL
-       ├── Redis
-       ├── Search Index
-       └── Object Storage
+The goal is to turn public web data into useful, trustworthy job opportunities.
 
-The architecture should scale by separating the bottlenecks, not by splitting everything into microservices from day one.
+---
+
+# 37. Final V1 Architecture
+
+    ┌───────────────────────┐
+    │       FRONTEND        │
+    │                       │
+    │ Search               │
+    │ Results              │
+    │ Details              │
+    └──────────┬────────────┘
+               │
+               ▼
+    ┌───────────────────────┐
+    │     SPRING BOOT       │
+    │   MODULAR MONOLITH    │
+    │                       │
+    │ API                   │
+    │ Discovery             │
+    │ Extraction            │
+    │ Normalization         │
+    │ Validation            │
+    │ Deduplication         │
+    │ Freshness             │
+    │ Ranking               │
+    │ Search                │
+    └──────────┬────────────┘
+               │
+               ▼
+    ┌───────────────────────┐
+    │      POSTGRESQL       │
+    │                       │
+    │ Opportunities         │
+    │ Sources               │
+    │ Raw Documents         │
+    │ Discovery Tasks       │
+    └───────────────────────┘
+
+The frontend exists in the repository from Day 1, but backend discovery and data processing are the first implementation priority.
+
+Frontend development begins after the backend has a reliable discovery pipeline and stable APIs.
+:::
+
+**Ab next `docs/architecture/scalability.md` ko bhi isi corrected approach ke according update karenge.**
